@@ -1,0 +1,210 @@
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                  ANÁLISE: ROTA /motoboy_cadastro (CADASTRO)                      ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+📍 ENDPOINT: POST /motoboy_cadastro/finalizar
+📱 CHAMADO EM: src/screens/SignupStep2Screen.tsx → onFinalizar()
+📤 COMO ENVIA: src/api/signup.ts → finalizarCadastro()
+
+═══════════════════════════════════════════════════════════════════════════════════
+
+📨 O QUE O APP ENVIA
+═══════════════════════════════════════════════════════════════════════════════════
+
+Content-Type: multipart/form-data
+
+CAMPOS DE TEXTO (Simples):
+─────────────────────────────────────────────────────────────────────────────────
+Nome                 │ Tipo      │ Exemplo               │ Obrigatório │ Notas
+─────────────────────┼───────────┼──────────────────────┼─────────────┼─────────
+nome                 │ string    │ "João Silva"          │ SIM         │
+celular              │ string    │ "(85) 98765-4321"     │ SIM         │ Formatado
+email                │ string    │ "joao@email.com"      │ SIM         │
+endereco             │ string    │ "Rua X, 123, Cidade"  │ SIM         │
+modal                │ string    │ "moto"/"carro"/etc    │ SIM         │ (1 de 5)
+placa                │ string    │ "ABC-1234"            │ SIM         │ Formatada
+nascimento           │ string    │ "01/01/1990"          │ SIM         │ dd/mm/aaaa
+cpf                  │ string    │ "123.456.789-00"      │ SIM         │ Formatado
+cnpj                 │ string    │ "12.345.678/0000-90"  │ NÃO         │ Opcional
+
+PAGAMENTO (Escolha obrigatória):
+─────────────────────────────────────────────────────────────────────────────────
+pay_method           │ string    │ "PIX" | "BANCO"       │ SIM         │
+
+SE PIX (pay_method = "PIX"):
+─────────────────────────────────────────────────────────────────────────────────
+pix_type             │ string    │ "cpf"/"cnpj"/etc      │ SIM         │
+pix_key              │ string    │ "123.456.789-00"      │ SIM         │ Varia por tipo
+pix_bank             │ string    │ "bb"/"bradesco"/etc   │ NÃO         │ Opcional
+
+SE BANCO (pay_method = "BANCO"):
+─────────────────────────────────────────────────────────────────────────────────
+bank_name            │ string    │ "bb"/"bradesco"/etc   │ SIM         │
+agencia              │ string    │ "0001"                │ SIM         │
+conta                │ string    │ "123456-0"            │ SIM         │
+
+ARQUIVOS (Multipart):
+─────────────────────────────────────────────────────────────────────────────────
+Field Name                   │ Aceita Múltiplos │ Obrigatório │ Tipos
+─────────────────────────────┼──────────────────┼─────────────┼──────────────
+foto_entregador[]            │ SIM              │ SIM (≥1)    │ image/* ou pdf
+doc_entregador[]             │ SIM              │ SIM (≥1)    │ image/* ou pdf
+doc_veiculo[]                │ SIM              │ SIM (≥1)    │ image/* ou pdf
+comprovante_residencia       │ NÃO (sem [])     │ SIM (=1)    │ image/* ou pdf
+
+DADO ADICIONAL (Para Debug):
+─────────────────────────────────────────────────────────────────────────────────
+anexos_resumo        │ JSON string com metadados dos arquivos (ignorado pelo backend)
+
+═══════════════════════════════════════════════════════════════════════════════════
+
+✅ O QUE O APP ESPERA DE VOLTA
+═══════════════════════════════════════════════════════════════════════════════════
+
+HTTP Status: 200 OK (qualquer outro = ERRO)
+
+Response Body (JSON):
+─────────────────────────────────────────────────────────────────────────────────
+{
+  "id": "uuid-123-abc-def" ou "12345"    ← OBRIGATÓRIO! Sem isso = erro
+}
+
+Comportamento pós-sucesso:
+1. ✅ Verifica se response.id existe
+2. ✅ Se não houver id → Lança erro "Servidor não retornou ID..."
+3. ✅ Se houver id → Exibe modal "Cadastro realizado com sucesso!"
+4. ✅ Aguarda 4 segundos (setTimeout)
+5. ✅ Redireciona para tela de LOGIN (não para Dashboard)
+
+═══════════════════════════════════════════════════════════════════════════════════
+
+🔍 VALIDAÇÕES NO APP (Etapa 1)
+═══════════════════════════════════════════════════════════════════════════════════
+
+Obrigatórios:
+  • Nome completo
+  • Celular (DDD): (XX) XXXXX-XXXX
+  • Email: padrão e-mail
+  • Endereço completo
+  • Modal (tipo de veículo): moto, carro, bike, van, outro
+  • Placa: XXX-XXXX (sem espaço)
+  • Data de nascimento: DD/MM/AAAA (exato 10 caracteres)
+  • CPF: XXX.XXX.XXX-XX
+  • Método de pagamento: PIX ou BANCO
+
+Validações de Dependência:
+  • Se PIX → tipo + chave obrigatórios
+  • Se BANCO → banco + agência + conta obrigatórios
+
+═══════════════════════════════════════════════════════════════════════════════════
+
+🔍 VALIDAÇÕES NO APP (Etapa 2)
+═══════════════════════════════════════════════════════════════════════════════════
+
+OBRIGATORIEDADE DE DOCUMENTOS:
+  ✓ foto_entregador (Selfie): pelo menos 1 arquivo
+  ✓ doc_entregador (RG/CNH): pelo menos 1 arquivo
+  ✓ doc_veiculo (CRLV): pelo menos 1 arquivo
+  ✓ comprovante_residencia: exatamente 1 arquivo
+
+Se algum faltar → Bloqueia e exibe Alert com lista do que falta.
+
+═══════════════════════════════════════════════════════════════════════════════════
+
+🎯 FLUXO RESUMIDO
+═══════════════════════════════════════════════════════════════════════════════════
+
+1. Usuário abre "SignupScreen" (Etapa 1)
+   ↓
+2. Preenche formulário (dados pessoais + pagamento)
+   ↓
+3. Clica "Prosseguir" → Valida e navega para SignupStep2
+   ❌ IMPORTANTE: NÃO envia nada para backend nesta etapa!
+   ↓
+4. Na Etapa 2, selecion afotos/documentos
+   ↓
+5. Clica "Finalizar cadastro" → Valida se os 4 docs estão presentes
+   ↓
+6. Se OK → Envia FormData com TUDO (dados + arquivos) para:
+   POST /motoboy_cadastro/finalizar
+   ↓
+7. Backend processa e responde com {"id": "..."}
+   ↓
+8. App exibe sucesso (modal 4s) → Redireciona para Login
+
+═══════════════════════════════════════════════════════════════════════════════════
+
+📁 ARQUIVOS ENVOLVIDOS
+═══════════════════════════════════════════════════════════════════════════════════
+
+Fonte de dados e lógica:
+  • src/screens/SignupScreen.tsx → Estado e validação (Etapa 1)
+  • src/screens/SignupStep2Screen.tsx → Seleção de arquivos (Etapa 2)
+  • src/api/signup.ts → Função finalizarCadastro() que constrói FormData
+
+Configuração:
+  • src/services/api.ts → SIGNUP_FINALIZE_PATH = "/motoboy_cadastro/finalizar"
+  • src/config.ts → API_BASE_URL para base da API
+
+═══════════════════════════════════════════════════════════════════════════════════
+
+⚠️ PONTOS CRÍTICOS PARA O BACKEND
+═══════════════════════════════════════════════════════════════════════════════════
+
+1. FORMDATA PARSING
+   → Extrair campos de texto e arquivos corretamente
+   → Usar biblioteca como multer (Node.js) ou equivalente
+
+2. ARRAYS DE ARQUIVOS
+   → foto_entregador[] → múltiplos arquivos
+   → doc_entregador[] → múltiplos arquivos
+   → doc_veiculo[] → múltiplos arquivos
+   → comprovante_residencia → SEM [] (esperado apenas 1)
+
+3. VALIDAÇÕES
+   → Verificar se todos os 4 documentos estão presentes
+   → Validar formatos de CPF, data, etc (ou apenas aceitar como texto?)
+   → Verificar duplicação de email/CPF?
+
+4. RESPOSTA OBRIGATÓRIA
+   → DEVE ter { "id": "..." }
+   → Status HTTP 200
+   → Qualquer outra resposta / status = ERRO para o app
+
+5. REDIRECIONAMENTO
+   → Após sucesso, app vai para Login (não para Dashboard)
+   → Usuario precisa fazer login com credenciais criadas neste cadastro
+
+═══════════════════════════════════════════════════════════════════════════════════
+
+💾 OPÇÕES DE VALORES (Dropdowns/Selects)
+═══════════════════════════════════════════════════════════════════════════════════
+
+Modal (tipo veículo):
+  • "moto"   → Moto
+  • "carro"  → Carro
+  • "bike"   → Bike
+  • "van"    → Van
+  • "outro"  → Outro
+
+Tipo PIX:
+  • "cpf"      → CPF
+  • "cnpj"     → CNPJ
+  • "celular"  → Celular
+  • "email"    → E-mail
+  • "aleatoria" → Aleatória
+
+Bancos (extensiva lista com 40+ opções):
+  • "bb"         → Banco do Brasil
+  • "bradesco"   → Bradesco
+  • "itau"       → Itaú Unibanco
+  • "caixa"      → Caixa Econômica Federal
+  • "santander"  → Santander
+  • "nubank"     → Nubank
+  • "inter"      → Inter
+  • ... (e mais 30+)
+
+═══════════════════════════════════════════════════════════════════════════════════
+
+Gerado em: 18/11/2025
+Local: /home/kron/apps/sigma/sigmha/entregador_app/

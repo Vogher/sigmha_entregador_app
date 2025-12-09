@@ -1,0 +1,83 @@
+{
+  "expo": {
+    "name": "Sigmha Motoboy",
+    "slug": "sigmha-motoboy",
+    "scheme": "sigmha-motoboy",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon.png",
+
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+
+    "android": {
+      "package": "com.sigmha.motoboy",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "SCHEDULE_EXACT_ALARM"
+      ],
+      "notification": {
+        "icon": "./assets/icon.png",
+        "color": "#D4AF37",
+        "channelId": "ofertas-alta-v6"
+      }
+    },
+
+    "ios": {
+      "bundleIdentifier": "com.sigmha.motoboy",
+      "buildNumber": "1.0.0",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Precisamos da sua localização para coletar e entregar pedidos.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Usamos sua localização em segundo plano para acompanhar as entregas em andamento.",
+        "NSCameraUsageDescription": "Usamos a câmera para tirar fotos como comprovante de entrega.",
+        "NSPhotoLibraryUsageDescription": "Usamos a galeria para anexar fotos às entregas.",
+        "NSUserTrackingUsageDescription": "Usamos esse identificador para melhorar métricas e desempenho do app."
+      }
+    },
+
+    "notification": {
+      "icon": "./assets/icon.png",
+      "color": "#D4AF37"
+    },
+
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#D4AF37",
+          "sounds": [
+            "./assets/sounds/clock_alarm_8761.mp3"
+          ]
+        }
+      ],
+      "expo-asset"
+    ],
+
+    "extra": {
+      "eas": {
+        "projectId": "2b274790-0b19-4d02-bdb3-4b0e49465881"
+      }
+    },
+
+    "owner": "alexandrebr"
+  }
+}

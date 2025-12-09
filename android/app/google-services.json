@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "807054062669",
+    "project_id": "sigmha-dev",
+    "storage_bucket": "sigmha-dev.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:807054062669:android:c0feb790d46789d9899804",
+        "android_client_info": {
+          "package_name": "com.sigmha.motoboy"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBVbTwWlzjghya4MLliT5V-tC9lTDLl69g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
