@@ -14,12 +14,12 @@ type Props = {
    Utils / chamadas ao backend
    ============================== */
 async function getCheckState(api: AxiosInstance, id: number): Promise<boolean> {
-  const urls = [`/api/motoboys/${id}/check-state`
-  ];
+  const urls = [`/api/motoboys/${id}/check-state`, `/motoboys/${id}/check-state`];
   for (const u of urls) {
     try {
       const { data } = await api.get(u);
-      if (typeof data?.checkedIn === "boolean") return data.checkedIn;
+      const val = data?.checkedIn ?? data?.checked_in;
+      if (typeof val === "boolean") return val;
     } catch {}
   }
   return false;

@@ -2,7 +2,6 @@
 import axios from "axios";
 
 const RAW_BASE =
-  (process.env.EXPO_PUBLIC_API_BASE ?? "").trim() ||
   "https://dev.alyssonrodrigues.com"; // fallback DEV (pode trocar por 127.0.0.1 se usar adb reverse)
 
 export const API_BASE = RAW_BASE.replace(/\/+$/, ""); // remove barra no final

@@ -264,11 +264,12 @@ export default function RecebimentosReport() {
   }, [user?.id]);
 
   // ===== buscar créditos/débitos do motoboy no período (preferindo data_card no filtro) =====
-  const fetchCredDeb = useCallback(async (fromISO: string, toISO: string) => {
+    const fetchCredDeb = useCallback(async (fromISO: string, toISO: string) => {
     if (!user?.id) return { creditos: [], debitos: [] as Lancamento[] };
-    const qs = `limit=1000&sort=data_desc&entregador=${user.id}`;
+    const qs = `limit=1000&sort=data_desc&entregador=${user.id}&de=${fromISO}&ate=${toISO}`;
     const urls = [
       `/api/credito-debito?${qs}`,
+      `/credito-debito?${qs}`,
     ];
     let arr: any[] = [];
     for (const u of urls) {

@@ -285,6 +285,9 @@ export default function HomeScreen() {
   // NEW: lista de entregas aceitas
   const [accepted, setAccepted] = useState<AcceptedDelivery[]>(() => getAcceptedDeliveries());
 
+  // NEW: estado de carregamento do recarregamento de entregas
+  const [loadingRefresh, setLoadingRefresh] = useState(false);
+
   // NEW: assinar o store ao montar
   useEffect(() => {
     const unsub = subscribeAccepted(setAccepted);
@@ -757,6 +760,60 @@ const payload: OfertaPayload = {
   useEffect(() => {
     fetchPendingAssignment();
   }, [fetchPendingAssignment]);
+
+  // --------- Função para recarregar entregas ---------
+
+  const handleRefreshEntregas = useCallback(async () => {
+    if (!motoboyId) return;
+    
+    setLoadingRefresh(true);
+    try {
+      const { data } = await api.get(`/api/motoboys/${motoboyId}/entregas-ativas`);
+      const arr = Array.isArray(data) ? data : [];
+
+      const list: AcceptedDelivery[] = arr.map((e: any) => {
+        const numeroPublico =
+          e.corrida_code ??
+          e.numero_publico ??
+          e.codigo_corrida ??
+          e.id_publico ??
+          e.numero ??
+          e.entrega_id ??
+          e.id;
+
+        return {
+          entrega_id: Number(e.entrega_id ?? e.id),
+          numero: numeroPublico,
+          cliente_nome: e.cliente_nome ?? null,
+          coleta_endereco: e.coleta_endereco ?? null,
+          entrega_endereco: e.entrega_endereco ?? null,
+          valor_total_motoboy: e.valor_total_motoboy ?? null,
+          valor_adicional_motoboy:
+            e.valor_adicional_motoboy ?? e.valor_adicional ?? null,
+          has_retorno: e.has_retorno,
+        } as any;
+      });
+
+      setAcceptedDeliveries(list);
+      setAccepted(list);
+
+      // Atualiza has_retorno
+      setHasRetornoById(() => {
+        const next: Record<number, boolean> = {};
+        for (const e of arr as any[]) {
+          const id = Number(e.entrega_id ?? e.id);
+          if (!Number.isFinite(id)) continue;
+          next[id] = strictHasRetornoOnly(e);
+        }
+        return next;
+      });
+    } catch (e) {
+      console.warn("[handleRefreshEntregas] Erro ao recarregar:", e);
+      Alert.alert("Erro", "Não foi possível recarregar as entregas.");
+    } finally {
+      setLoadingRefresh(false);
+    }
+  }, [motoboyId]);
 
   // --------- Buscar entregas ativas no backend ---------
 
@@ -1434,9 +1491,57 @@ function strictHasRetorno(data: any): boolean {
       <Text style={{ color: text, fontSize: 18, fontWeight: "800", textAlign: "center" }}>
         Ops... Você não tem nenhuma entrega no momento.
       </Text>
+      <Pressable
+        onPress={handleRefreshEntregas}
+        disabled={loadingRefresh}
+        style={{
+          marginTop: 12,
+          paddingHorizontal: 24,
+          paddingVertical: 10,
+          backgroundColor: gold,
+          borderRadius: 8,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 8,
+          opacity: loadingRefresh ? 0.6 : 1,
+        }}
+      >
+        <MaterialCommunityIcons 
+          name={loadingRefresh ? "loading" : "refresh"} 
+          size={18} 
+          color="#000"
+        />
+        <Text style={{ color: "#000", fontWeight: "800", fontSize: 14 }}>
+          {loadingRefresh ? "Recarregando..." : "Recarregar"}
+        </Text>
+      </Pressable>
     </View>
   ) : (
     <View style={{ width: "100%", gap: 14 }}>
+      <Pressable
+        onPress={handleRefreshEntregas}
+        disabled={loadingRefresh}
+        style={{
+          paddingHorizontal: 16,
+          paddingVertical: 10,
+          backgroundColor: gold,
+          borderRadius: 8,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 8,
+          opacity: loadingRefresh ? 0.6 : 1,
+        }}
+      >
+        <MaterialCommunityIcons 
+          name={loadingRefresh ? "loading" : "refresh"} 
+          size={18} 
+          color="#000"
+        />
+        <Text style={{ color: "#000", fontWeight: "800", fontSize: 14 }}>
+          {loadingRefresh ? "Recarregando..." : "Recarregar Entregas"}
+        </Text>
+      </Pressable>
       {accepted.map((e) => {
         const stage = stageById[e.entrega_id] ?? 'coletar';
         const isLoading = holdLoadingIds.has(e.entrega_id);
