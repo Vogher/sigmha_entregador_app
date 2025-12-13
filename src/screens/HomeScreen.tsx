@@ -35,6 +35,7 @@ import {
   subscribeAccepted,
   type AcceptedDelivery,
 } from "@/states/acceptedDeliveries";
+import { getEcho, configureEcho, logEventData, diagnoseEchoConnection, enableEchoDebugMode } from "@/services/echo";
 
 /**
  * Este arquivo está alinhado ao backend que envia push com data.type = 'new_delivery'
@@ -105,7 +106,6 @@ function coerceHasRetorno(x: any): boolean {
 function pickFiliacao(data: any): string | null {
   const candidates: Array<unknown> = [
     data?.filiacao,
-    data?.filiation,
     data?.filiado_a,
     data?.atribuido_a,
     data?.vinculado_a,
@@ -206,7 +206,7 @@ async function checkOfferStillYours(
     const assignDeadlineISO =
       data.assign_deadline_at ?? data.expira_em ?? data.deadline ?? null;
 
-    const isNovo = /^(novo|pendente|await|waiting)$/i.test(status);
+    const isNovo = /^(novo|pendente|await|waiting|atribuido|pronto)$/i.test(status);
     const idOk = typeof atribId === "number" && Number(atribId) === Number(motoboyId);
     const nomeOk =
       !idOk &&
@@ -232,7 +232,7 @@ async function checkOfferStillYours(
 const ASSIGN_TTL_MS = 15000;
 
 export default function HomeScreen() {
-  const { user, logout } = useAuth();
+  const { user, token, logout } = useAuth();
 
   const [activeTab, setActiveTab] = useState<TabKey>("status");
   const [isOnline, setIsOnline] = useState(false);
@@ -285,9 +285,6 @@ export default function HomeScreen() {
   // NEW: lista de entregas aceitas
   const [accepted, setAccepted] = useState<AcceptedDelivery[]>(() => getAcceptedDeliveries());
 
-  // NEW: estado de carregamento do recarregamento de entregas
-  const [loadingRefresh, setLoadingRefresh] = useState(false);
-
   // NEW: assinar o store ao montar
   useEffect(() => {
     const unsub = subscribeAccepted(setAccepted);
@@ -295,6 +292,8 @@ export default function HomeScreen() {
       unsub();
     };
   }, []);
+
+
 
 useEffect(() => {
   setHasRetornoById(prev => {
@@ -428,14 +427,17 @@ useEffect(() => {
         setSegundosRestantes(left);
         if (left === 0) {
           if (countdownRef.current) clearInterval(countdownRef.current);
-          fecharOferta(false);
+          // Auto-reject when time runs out
+          rejeitarEntrega(Number(o.entrega_id)).then(() => {
+            fecharOferta(false);
+          });
         }
       };
       tick();
       countdownRef.current = setInterval(tick, 1000);
       await tocarAlarme();
     },
-    [fecharOferta, tocarAlarme, motoboyId, user?.nome, ofertaAtual]
+    [fecharOferta, tocarAlarme, motoboyId, user?.nome, ofertaAtual, rejeitarEntrega]
   );
 
   const enfileirarOuAbrir = useCallback(
@@ -493,7 +495,7 @@ async function fetchEntregaById(entregaId: number): Promise<any | null> {
 
   // ---------- Push: mapear payload do backend ----------
   const handlePushData = useCallback(
-  async (data: any) => {
+    async (data: any) => {
     const isNova = data?.type === "new_delivery";
     const isCompat = data?.type === "oferta_corrida" || data?.tipo === "oferta";
     if (!(isNova || isCompat)) return;
@@ -761,60 +763,6 @@ const payload: OfertaPayload = {
     fetchPendingAssignment();
   }, [fetchPendingAssignment]);
 
-  // --------- Função para recarregar entregas ---------
-
-  const handleRefreshEntregas = useCallback(async () => {
-    if (!motoboyId) return;
-    
-    setLoadingRefresh(true);
-    try {
-      const { data } = await api.get(`/api/motoboys/${motoboyId}/entregas-ativas`);
-      const arr = Array.isArray(data) ? data : [];
-
-      const list: AcceptedDelivery[] = arr.map((e: any) => {
-        const numeroPublico =
-          e.corrida_code ??
-          e.numero_publico ??
-          e.codigo_corrida ??
-          e.id_publico ??
-          e.numero ??
-          e.entrega_id ??
-          e.id;
-
-        return {
-          entrega_id: Number(e.entrega_id ?? e.id),
-          numero: numeroPublico,
-          cliente_nome: e.cliente_nome ?? null,
-          coleta_endereco: e.coleta_endereco ?? null,
-          entrega_endereco: e.entrega_endereco ?? null,
-          valor_total_motoboy: e.valor_total_motoboy ?? null,
-          valor_adicional_motoboy:
-            e.valor_adicional_motoboy ?? e.valor_adicional ?? null,
-          has_retorno: e.has_retorno,
-        } as any;
-      });
-
-      setAcceptedDeliveries(list);
-      setAccepted(list);
-
-      // Atualiza has_retorno
-      setHasRetornoById(() => {
-        const next: Record<number, boolean> = {};
-        for (const e of arr as any[]) {
-          const id = Number(e.entrega_id ?? e.id);
-          if (!Number.isFinite(id)) continue;
-          next[id] = strictHasRetornoOnly(e);
-        }
-        return next;
-      });
-    } catch (e) {
-      console.warn("[handleRefreshEntregas] Erro ao recarregar:", e);
-      Alert.alert("Erro", "Não foi possível recarregar as entregas.");
-    } finally {
-      setLoadingRefresh(false);
-    }
-  }, [motoboyId]);
-
   // --------- Buscar entregas ativas no backend ---------
 
   // ===== POLLING DE STATUS (a cada 3s) =====
@@ -948,6 +896,149 @@ useEffect(() => {
       sub2.remove();
     };
   }, [handlePushData]);
+
+  // ---------- Echo Setup ----------
+  useEffect(() => {
+    if (!token || !motoboyId) {
+      console.log('[Echo] Skipping setup - token:', !!token, 'motoboyId:', motoboyId);
+      return;
+    }
+
+    console.log('[Echo] === Starting Echo Setup ===');
+    console.log('[Echo] Token:', token.substring(0, 30) + '...');
+    console.log('[Echo] MotoboyId:', motoboyId);
+
+    // Initialize Echo with the token
+    const echoInstance = configureEcho(token);
+    if (!echoInstance) {
+      console.error('[Echo] Failed to initialize Echo');
+      return;
+    }
+
+    // Channel name WITHOUT the "private:" prefix - echo.private() adds it automatically
+    const channelName = `courier.${motoboyId}`;
+    console.log(`[Echo] Will subscribe to: private:${channelName}`);
+
+    let unsubscribe: (() => void) | null = null;
+    
+    // Subscribe immediately - the connection should be ready
+    try {
+      console.log('[Echo] Subscribing to channel...');
+      
+      // Subscribe to private channel - echo.private() adds "private:" prefix automatically
+      const channel = echoInstance.private(channelName);
+
+      // Listen for delivery.offered event
+      channel.listen('.delivery.offered', (data: any) => {
+        console.log('[Echo] 🎯 EVENT RECEIVED - delivery.offered');
+        logEventData('delivery.offered', data);
+        try {
+          handlePushData(data);
+        } catch (err) {
+          console.error('[Echo] Error handling push data:', err);
+        }
+      });
+
+      // Try to listen for general messages on the channel
+      try {
+        channel.listen('.message', (data: any) => {
+          console.log('[Echo] 📨 EVENT RECEIVED - message');
+          logEventData('message', data);
+        });
+      } catch (e) {
+        // Event name might not be supported
+      }
+
+      console.log(`[Echo] ✅ Listener attached to ${channelName}`);
+      
+      unsubscribe = () => {
+        console.log(`[Echo] 🚪 Unsubscribing from ${channelName}`);
+        try {
+          echoInstance.leave(channelName);
+        } catch (err) {
+          console.warn('[Echo] Error leaving channel:', err);
+        }
+      };
+    } catch (error) {
+      console.error('[Echo] ❌ Failed to setup channel subscription:', error);
+      console.error('[Echo] Error details:', {
+        message: (error as any)?.message,
+        stack: (error as any)?.stack,
+      });
+    }
+
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, [token, motoboyId, handlePushData]);
+
+  // ---------- Test Publishing to Channel ----------
+  const testPublishEvent = useCallback(async () => {
+    if (!token || !motoboyId) {
+      Alert.alert('Erro', 'Token ou MotoboyID ausentes');
+      return;
+    }
+
+    try {
+      console.log('\n');
+      console.log('═══════════════════════════════════════════════════');
+      console.log('[Echo Test] 🧪 INICIANDO TESTE DE PUBLICAÇÃO');
+      console.log('═══════════════════════════════════════════════════');
+      console.log('[Echo Test] Timestamp:', new Date().toISOString());
+      console.log('[Echo Test] MotoboyId:', motoboyId);
+      
+      // Enable debug mode to see all WebSocket events
+      console.log('[Echo Test] Ativando modo debug...');
+      enableEchoDebugMode();
+      
+      // Diagnose current connection status
+      console.log('\n[Echo Test] Status da conexão ANTES do teste:');
+      diagnoseEchoConnection();
+      
+      console.log('\n[Echo Test] Enviando requisição para backend...');
+      
+      const payload = {
+        motoboy_id: motoboyId,
+        entrega_id: 38,
+        numero: 'TEST-001',
+        cliente_nome: 'Test Client',
+        coleta_endereco: 'Rua Test, 123',
+        entrega_endereco: 'Rua Destino, 456',
+        valor_total_motoboy: 50.00,
+        valor_adicional_motoboy: 10.00,
+        expira_em: new Date(Date.now() + 15000).toISOString(),
+      };
+      
+      console.log('[Echo Test] Payload enviado:');
+      console.log(JSON.stringify(payload, null, 2));
+
+      const response = await api.post('/api/test/publish-delivery', payload);
+
+      console.log('\n[Echo Test] ✅ Resposta do backend recebida:');
+      console.log(JSON.stringify(response.data, null, 2));
+      console.log('[Echo Test] Status HTTP:', response.status);
+      
+      console.log('\n[Echo Test] Status da conexão DEPOIS do teste:');
+      diagnoseEchoConnection();
+      
+      console.log('\n═══════════════════════════════════════════════════');
+      console.log('[Echo Test] ⏳ AGUARDANDO EVENTO NO CLIENTE...');
+      console.log('[Echo Test] Abra o console e observe se o evento é recebido');
+      console.log('[Echo Test] Se não receber em 5 segundos, há um problema na conexão');
+      console.log('═══════════════════════════════════════════════════\n');
+      
+      Alert.alert('Sucesso', 'Evento de teste publicado.\n\nAbra o console para ver os detalhes e diagnosticar o problema.');
+    } catch (error) {
+      console.error('\n[Echo Test] ❌ Falha ao publicar evento de teste:');
+      console.error(JSON.stringify(error, null, 2));
+      diagnoseEchoConnection();
+
+      console.log('═══════════════════════════════════════════════════\n');
+      Alert.alert('Erro', 'Falha ao publicar evento de teste. Verifique o console.');
+    }
+  }, [token, motoboyId]);
 
   // ---------- Aceitar / Recusar (rotas novas) ----------
   const aceitarEntrega = useCallback(
@@ -1337,6 +1428,50 @@ function strictHasRetorno(data: any): boolean {
   return parseNumberBR(raw) > 0;
 }
 
+/** Helper: Busca detalhes da entrega para validar requisitos de assinatura/fotos */
+async function fetchDeliveryForValidation(entregaId: number): Promise<any> {
+  const urls = [
+    `/api/entregas-pendentes/${entregaId}`,
+    `/entregas-pendentes/${entregaId}`,
+  ];
+  for (const u of urls) {
+    try {
+      console.log('[HOME] Fetching from:', u);
+      const { data } = await api.get(u);
+      if (data) {
+        console.log('[HOME] Successfully fetched from:', u);
+        return data;
+      }
+    } catch (e) {
+      console.log('[HOME] Failed to fetch from:', u, 'Error:', (e as any)?.message);
+    }
+  }
+  console.log('[HOME] ⚠️ Could not fetch delivery details for validation');
+  return null;
+}
+
+/** Check media on backend - returns whether photos and signature exist */
+async function checkMediaOnBackend(entregaId: number): Promise<{ has_photos: boolean; has_signature: boolean }> {
+  const urls = [
+    `/api/entregas-pendentes/${entregaId}/check-media`,
+    `/entregas-pendentes/${entregaId}/check-media`,
+  ];
+  for (const u of urls) {
+    try {
+      console.log('[HOME] Checking media at:', u);
+      const r = await api.get(u);
+      if (r?.data) {
+        console.log('[HOME] Media check response:', r.data);
+        return r.data;
+      }
+    } catch (e) {
+      console.log('[HOME] Media check failed:', (e as any)?.message);
+    }
+  }
+  console.log('[HOME] ⚠️ Could not check media on backend, assuming missing');
+  return { has_photos: false, has_signature: false };
+}
+
   // Long-press concluído (>= 3s)
   const onHoldSuccess = useCallback(async (entregaId: number) => {
   longPressOkRef.current.add(entregaId);
@@ -1345,6 +1480,76 @@ function strictHasRetorno(data: any): boolean {
 
   if (current === 'finalizar') {
     if (!motoboyId) return;
+    
+    console.log('[HOME] Finalizar pressed - entregaId:', entregaId);
+    
+    // Validação: Verificar se a entrega requer assinatura
+    const deliveryDetails = await fetchDeliveryForValidation(entregaId);
+    console.log('[HOME] Fetched delivery details:', { entregaId, keys: deliveryDetails ? Object.keys(deliveryDetails) : 'null' });
+    console.log('[HOME] Raw comprovante_assinado value:', deliveryDetails?.comprovante_assinado, 'Type:', typeof deliveryDetails?.comprovante_assinado);
+    
+    const requiresSignature = deliveryDetails && (
+      deliveryDetails.comprovante_assinado === true ||
+      deliveryDetails.comprovante_assinado === '1' ||
+      deliveryDetails.comprovante_assinado === 1 ||
+      String(deliveryDetails.comprovante_assinado).toLowerCase() === 'true'
+    );
+    
+    console.log('[HOME] Requires signature?', requiresSignature);
+    
+    if (requiresSignature) {
+      console.log('[HOME] Checking media on backend...');
+      const mediaCheck = await checkMediaOnBackend(entregaId);
+      console.log('[HOME] Backend media check:', mediaCheck);
+      
+      if (!mediaCheck.has_signature || !mediaCheck.has_photos) {
+        console.log('[HOME] ❌ BLOCKING finalization - missing media');
+        Alert.alert(
+          'Detalhes necessários',
+          'Esta entrega requer assinatura e fotos. Acesse os detalhes da entrega para coletar essas informações antes de finalizar.',
+          [
+            {
+              text: 'Ir para detalhes',
+              onPress: () => {
+                console.log('[HOME] User chose to open details');
+                openDetails(accepted.find(x => x.entrega_id === entregaId)!);
+              },
+            },
+            {
+              text: 'Cancelar',
+              style: 'cancel',
+            },
+          ]
+        );
+        return;
+      }
+    }
+    
+    console.log('[HOME] ✅ Proceeding with finalization');
+    
+    // Final re-check before sending to server
+    console.log('[HOME] FINAL RE-CHECK before finalizarEntrega call...');
+    const finalDeliveryCheck = await fetchDeliveryForValidation(entregaId);
+    const finalRequiresSignature = finalDeliveryCheck && (
+      finalDeliveryCheck.comprovante_assinado === true ||
+      finalDeliveryCheck.comprovante_assinado === '1' ||
+      finalDeliveryCheck.comprovante_assinado === 1 ||
+      String(finalDeliveryCheck.comprovante_assinado).toLowerCase() === 'true'
+    );
+    console.log('[HOME] FINAL CHECK - Requires signature?', finalRequiresSignature);
+    
+    if (finalRequiresSignature) {
+      console.log('[HOME] Final media check on backend...');
+      const finalMediaCheck = await checkMediaOnBackend(entregaId);
+      console.log('[HOME] FINAL media check response:', finalMediaCheck);
+      
+      if (!finalMediaCheck.has_signature || !finalMediaCheck.has_photos) {
+        console.log('[HOME] ❌ FINAL CHECK FAILED - missing media');
+        Alert.alert('Atenção', 'Esta entrega requer assinatura e fotos. Acesse os detalhes para completar.');
+        return;
+      }
+    }
+    
     setHoldLoadingIds(s => new Set(s).add(entregaId));
     const ok = await finalizarEntrega(entregaId, motoboyId as number);
     setHoldLoadingIds(s => { const n = new Set(s); n.delete(entregaId); return n; });
@@ -1491,57 +1696,9 @@ function strictHasRetorno(data: any): boolean {
       <Text style={{ color: text, fontSize: 18, fontWeight: "800", textAlign: "center" }}>
         Ops... Você não tem nenhuma entrega no momento.
       </Text>
-      <Pressable
-        onPress={handleRefreshEntregas}
-        disabled={loadingRefresh}
-        style={{
-          marginTop: 12,
-          paddingHorizontal: 24,
-          paddingVertical: 10,
-          backgroundColor: gold,
-          borderRadius: 8,
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 8,
-          opacity: loadingRefresh ? 0.6 : 1,
-        }}
-      >
-        <MaterialCommunityIcons 
-          name={loadingRefresh ? "loading" : "refresh"} 
-          size={18} 
-          color="#000"
-        />
-        <Text style={{ color: "#000", fontWeight: "800", fontSize: 14 }}>
-          {loadingRefresh ? "Recarregando..." : "Recarregar"}
-        </Text>
-      </Pressable>
     </View>
   ) : (
     <View style={{ width: "100%", gap: 14 }}>
-      <Pressable
-        onPress={handleRefreshEntregas}
-        disabled={loadingRefresh}
-        style={{
-          paddingHorizontal: 16,
-          paddingVertical: 10,
-          backgroundColor: gold,
-          borderRadius: 8,
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 8,
-          opacity: loadingRefresh ? 0.6 : 1,
-        }}
-      >
-        <MaterialCommunityIcons 
-          name={loadingRefresh ? "loading" : "refresh"} 
-          size={18} 
-          color="#000"
-        />
-        <Text style={{ color: "#000", fontWeight: "800", fontSize: 14 }}>
-          {loadingRefresh ? "Recarregando..." : "Recarregar Entregas"}
-        </Text>
-      </Pressable>
       {accepted.map((e) => {
         const stage = stageById[e.entrega_id] ?? 'coletar';
         const isLoading = holdLoadingIds.has(e.entrega_id);
@@ -1651,6 +1808,11 @@ function strictHasRetorno(data: any): boolean {
           label: "Notificações",
           icon: "bell-outline",
           onPress: () => setShowNotificationsModal(true),
+        },
+        {
+          label: "🧪 Teste: Publicar Evento",
+          icon: "test-tube",
+          onPress: testPublishEvent,
         },
       ].map((item) => (
         <Pressable

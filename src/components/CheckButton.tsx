@@ -13,6 +13,31 @@ type Props = {
 /* ==============================
    Utils / chamadas ao backend
    ============================== */
+
+/** Extract local time from ISO timestamp */
+function extractAndConvertTime(isoTimestamp: string): string {
+  try {
+    // Parse ISO timestamp like "2025-12-13T22:28:00.000000Z"
+    const date = new Date(isoTimestamp);
+    if (isNaN(date.getTime())) return '';
+    
+    // Format as local time HH:MM
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    
+    return `${hours}:${minutes}`;
+  } catch (e) {
+    return '';
+  }
+}
+
+/** Format checkout error message with local time */
+function formatCheckoutError(errorMsg: string, timeStr: string): string {
+  const localTime = extractAndConvertTime(timeStr);
+  if (!localTime) return errorMsg;
+  return `${errorMsg} (${localTime}).`;
+}
+
 async function getCheckState(api: AxiosInstance, id: number): Promise<boolean> {
   const urls = [`/api/motoboys/${id}/check-state`, `/motoboys/${id}/check-state`];
   for (const u of urls) {
@@ -48,7 +73,15 @@ async function doCheckout(api: AxiosInstance, id: number) {
       if (status >= 200 && status < 300)
         return { ok: true, message: data?.message || "Check-out realizado." };
     } catch (e: any) {
-      const msg = e?.response?.data?.error || e?.message || "Falha no check-out.";
+      // Handle new response format: { error: string, time: ISO timestamp }
+      const errorData = e?.response?.data;
+      if (errorData?.error && errorData?.time) {
+        const formattedMsg = formatCheckoutError(errorData.error, errorData.time);
+        return { ok: false, message: formattedMsg };
+      }
+      
+      // Fallback to old format or generic error
+      const msg = errorData?.error || e?.message || "Falha no check-out.";
       return { ok: false, message: msg };
     }
   }

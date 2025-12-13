@@ -661,6 +661,28 @@ export default function DeliveryDetailsScreen() {
     return false;
   }
 
+  /** Check media on backend - returns whether photos and signature exist */
+  async function checkMediaOnBackend(entregaId: number): Promise<{ has_photos: boolean; has_signature: boolean }> {
+    const urls = [
+      `/api/entregas-pendentes/${entregaId}/check-media`,
+      `/entregas-pendentes/${entregaId}/check-media`,
+    ];
+    for (const u of urls) {
+      try {
+        console.log('[DETAILS] Checking media at:', u);
+        const r = await api.get(u);
+        if (r?.data) {
+          console.log('[DETAILS] Media check response:', r.data);
+          return r.data;
+        }
+      } catch (e) {
+        console.log('[DETAILS] Media check failed:', (e as any)?.message);
+      }
+    }
+    console.log('[DETAILS] ⚠️ Could not check media on backend, assuming missing');
+    return { has_photos: false, has_signature: false };
+  }
+
   // —————————————————— UI helpers ——————————————————
   const Field = ({ label, value, always }: { label: string; value?: string | null; always?: boolean; }) => {
     const show = always || (value !== undefined && value !== null && String(value).trim().length > 0);
@@ -701,6 +723,36 @@ export default function DeliveryDetailsScreen() {
         Alert.alert('Erro', 'Motoboy não identificado para finalizar a entrega.');
         return;
       }
+
+      // Validação: Se requer assinatura, deve ter assinatura E fotos
+      const requiresSignature = toBool(entrega?.comprovante_assinado);
+      console.log('[DETAILS] Finalizar pressed - entregaId:', entregaId);
+      console.log('[DETAILS] Requires signature?', requiresSignature);
+      
+      if (requiresSignature) {
+        console.log('[DETAILS] Checking media on backend...');
+        const mediaCheck = await checkMediaOnBackend(entregaId);
+        console.log('[DETAILS] Backend media check:', mediaCheck);
+        
+        if (!mediaCheck.has_signature) {
+          console.log('[DETAILS] ❌ BLOCKING - No signature on backend');
+          Alert.alert('Assinatura necessária', 'Esta entrega requer assinatura do cliente. Colha a assinatura antes de finalizar.');
+          setSignatureModalVisible(true);
+          return;
+        }
+
+        if (!mediaCheck.has_photos) {
+          console.log('[DETAILS] ❌ BLOCKING - No photos on backend');
+          Alert.alert('Fotos necessárias', 'Esta entrega requer pelo menos uma foto. Tire uma foto antes de finalizar.');
+          setPhotoModalVisible(true);
+          return;
+        }
+        
+        console.log('[DETAILS] ✅ All media found on backend - proceeding with finalization');
+      } else {
+        console.log('[DETAILS] ✅ No signature required - proceeding with finalization');
+      }
+
       const ok = await finalizarEntrega(entregaId, motoboyId as number);
       if (!ok) {
         Alert.alert('Falha', 'Não foi possível finalizar a entrega no servidor.');

@@ -5,6 +5,7 @@ const RAW_BASE =
   "https://dev.alyssonrodrigues.com"; // fallback DEV (pode trocar por 127.0.0.1 se usar adb reverse)
 
 export const API_BASE = RAW_BASE.replace(/\/+$/, ""); // remove barra no final
+export const API_BASE_URL = API_BASE; // alias para compatibilidade com echo.ts
 
 export const AUTH_LOGIN_PATH = "/api/motoboy/login";
 export const SIGNUP_CREATE_PATH = "/api/motoboy_cadastro";
