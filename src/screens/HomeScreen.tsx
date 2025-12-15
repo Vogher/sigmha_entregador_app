@@ -12,6 +12,7 @@ import {
   AppState,
   AppStateStatus,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
@@ -206,7 +207,7 @@ async function checkOfferStillYours(
     const assignDeadlineISO =
       data.assign_deadline_at ?? data.expira_em ?? data.deadline ?? null;
 
-    const isNovo = /^(novo|pendente|await|waiting|atribuido|pronto)$/i.test(status);
+    const isNovo = /^(novo|pendente|aceito|await|waiting|atribuido|pronto)$/i.test(status);
     const idOk = typeof atribId === "number" && Number(atribId) === Number(motoboyId);
     const nomeOk =
       !idOk &&
@@ -235,7 +236,8 @@ export default function HomeScreen() {
   const { user, token, logout } = useAuth();
 
   const [activeTab, setActiveTab] = useState<TabKey>("status");
-  const [isOnline, setIsOnline] = useState(false);
+  const [isOnline, setIsOnline] = useState<boolean | null>(null); // null = loading, boolean = actual state
+  const [loadingOnlineStatus, setLoadingOnlineStatus] = useState(true);
 
   const [filiacao, setFiliacao] = useState<string>("Nenhum");
   const [loadingFiliacao, setLoadingFiliacao] = useState<boolean>(false);
@@ -475,6 +477,25 @@ async function fetchEntregaById(entregaId: number): Promise<any | null> {
 
 
 
+  const fetchOnlineStatus = useCallback(async () => {
+    if (!motoboyId) {
+      setIsOnline(false);
+      setLoadingOnlineStatus(false);
+      return;
+    }
+    setLoadingOnlineStatus(true);
+    try {
+      const { data } = await api.get(`/api/motoboys/${motoboyId}/status`);
+      const status = data?.is_online ?? false;
+      setIsOnline(status);
+    } catch (e) {
+      console.warn("Falha ao buscar status online:", e);
+      setIsOnline(false);
+    } finally {
+      setLoadingOnlineStatus(false);
+    }
+  }, [motoboyId]);
+
   const fetchFiliacao = useCallback(async () => {
     if (!motoboyId) {
       setFiliacao("Nenhum");
@@ -614,7 +635,7 @@ async function fetchEntregaById(entregaId: number): Promise<any | null> {
     async (status: "Online" | "Offline") => {
       if (!motoboyId) return false;
       try {
-        await api.put(`/api/motoboys/${motoboyId}/status`, { off_on: status });
+        await api.put(`/api/motoboys/${motoboyId}/status`, { is_online: status });
         return true;
       } catch (e) {
         console.warn("Falha ao atualizar off_on:", e);
@@ -672,31 +693,34 @@ async function fetchEntregaById(entregaId: number): Promise<any | null> {
     if (ok) {
       setIsOnline(true);
       await startWatch();
+      fetchOnlineStatus();
       fetchFiliacao();
     } else {
-      setIsOnline(false);
+      fetchOnlineStatus();
     }
-  }, [locGranted, setStatus, startWatch, fetchFiliacao]);
+  }, [locGranted, setStatus, startWatch, fetchOnlineStatus, fetchFiliacao]);
 
   const goOffline = useCallback(async () => {
     stopWatch();
     await setStatus("Offline");
-    setIsOnline(false);
+    fetchOnlineStatus();
     fetchFiliacao();
-  }, [setStatus, stopWatch, fetchFiliacao]);
+  }, [setStatus, stopWatch, fetchOnlineStatus, fetchFiliacao]);
 
   // --------- Montagem / Desmontagem ---------
   useEffect(() => {
+    fetchOnlineStatus();
     fetchFiliacao();
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(() => {
+      fetchOnlineStatus();
       fetchFiliacao();
     }, 10000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = null;
     };
-  }, [fetchFiliacao]);
+  }, [fetchOnlineStatus, fetchFiliacao]);
 
   // Busca atribuições que ainda estão dentro do prazo (TTL) quando o app volta ao 1º plano
   const fetchPendingAssignment = useCallback(async () => {
@@ -939,6 +963,39 @@ useEffect(() => {
         }
       });
 
+      // Listen for delivery_removed event - when delivery is reassigned to another motoboy
+      channel.listen('.delivery.unassigned', (data: any) => {
+        console.log('[Echo] 🗑️ EVENT RECEIVED - delivery_removed');
+        logEventData('delivery_removed', data);
+        try {
+          const entregaId = Number(data?.entrega_id ?? 0);
+          console.log(entregaId, accepted)
+          if (!entregaId) return;
+          
+          // Remove from accepted deliveries list
+          const removed = accepted.find(a => a.entrega_id === entregaId);
+          if (removed) {
+            console.log(`[Echo] Removing delivery ${entregaId} from accepted list`);
+            const updated = accepted.filter(a => a.entrega_id !== entregaId);
+            setAccepted(updated);
+            
+            // If this is the current offer, close it and open next
+            if (ofertaAtual?.entrega_id === entregaId) {
+              console.log(`[Echo] Current offer was removed, closing and opening next`);
+              fecharOferta(true);
+            }
+            
+            // Show notification to user
+            Alert.alert(
+              'Entrega Removida',
+              data?.message || 'A entrega foi removida da sua lista.'
+            );
+          }
+        } catch (err) {
+          console.error('[Echo] Error handling delivery_removed event:', err);
+        }
+      });
+
       // Try to listen for general messages on the channel
       try {
         channel.listen('.message', (data: any) => {
@@ -947,6 +1004,16 @@ useEffect(() => {
         });
       } catch (e) {
         // Event name might not be supported
+      }
+
+      // DEBUG: Catch-all listener to see ALL events on this channel
+      try {
+        channel.on('*', (event: string, data: any) => {
+          console.log(`[Echo] 🔔 CATCH-ALL EVENT: ${event}`, data);
+          logEventData(`catch-all: ${event}`, data);
+        });
+      } catch (e) {
+        console.warn('[Echo] Catch-all listener not supported:', e);
       }
 
       console.log(`[Echo] ✅ Listener attached to ${channelName}`);
@@ -1636,40 +1703,53 @@ async function checkMediaOnBackend(entregaId: number): Promise<{ has_photos: boo
 
     {/* Card OFF / ON */}
     <View style={{ width: "100%", backgroundColor: card, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: border, gap: 12 }}>
-      <View style={{ flexDirection: "row", borderRadius: 12, overflow: "hidden", borderWidth: 1, borderColor: border }}>
-        <Pressable
-          onPress={goOffline}
-          style={{
-            flex: 1,
-            paddingVertical: 14,
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: !isOnline ? "rgba(239,68,68,0.12)" : "transparent",
-          }}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <MaterialCommunityIcons name="map-marker-off-outline" size={20} color={!isOnline ? red : grey} />
-            <Text style={{ color: !isOnline ? red : grey, fontWeight: "800" }}>Estou OFF</Text>
+      {loadingOnlineStatus ? (
+        <View style={{ paddingVertical: 20, alignItems: "center", justifyContent: "center" }}>
+          <ActivityIndicator color={gold} size="large" />
+          <Text style={{ color: grey, marginTop: 8 }}>Carregando status...</Text>
+        </View>
+      ) : (
+        <>
+          <View style={{ flexDirection: "row", borderRadius: 12, overflow: "hidden", borderWidth: 1, borderColor: border }}>
+            <Pressable
+              onPress={goOffline}
+              disabled={isOnline === null}
+              style={{
+                flex: 1,
+                paddingVertical: 14,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: !isOnline ? "rgba(239,68,68,0.12)" : "transparent",
+                opacity: isOnline === null ? 0.5 : 1,
+              }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <MaterialCommunityIcons name="map-marker-off-outline" size={20} color={!isOnline ? red : grey} />
+                <Text style={{ color: !isOnline ? red : grey, fontWeight: "800" }}>Estou OFF</Text>
+              </View>
+            </Pressable>
+            <View style={{ width: 1, backgroundColor: border }} />
+            <Pressable
+              onPress={goOnline}
+              disabled={isOnline === null}
+              style={{
+                flex: 1,
+                paddingVertical: 14,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: isOnline ? "rgba(34,197,94,0.10)" : "transparent",
+                opacity: isOnline === null ? 0.5 : 1,
+              }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <MaterialCommunityIcons name="map-marker-outline" size={20} color={isOnline ? green : grey} />
+                <Text style={{ color: isOnline ? text : grey, fontWeight: "800" }}>Estou ON</Text>
+              </View>
+            </Pressable>
           </View>
-        </Pressable>
-        <View style={{ width: 1, backgroundColor: border }} />
-        <Pressable
-          onPress={goOnline}
-          style={{
-            flex: 1,
-            paddingVertical: 14,
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: isOnline ? "rgba(34,197,94,0.10)" : "transparent",
-          }}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <MaterialCommunityIcons name="map-marker-outline" size={20} color={isOnline ? green : grey} />
-            <Text style={{ color: isOnline ? text : grey, fontWeight: "800" }}>Estou ON</Text>
-          </View>
-        </Pressable>
-      </View>
-      <Text style={{ color: grey, textAlign: "center", fontSize: 12 }}>Toque para alternar seu status.</Text>
+          <Text style={{ color: grey, textAlign: "center", fontSize: 12 }}>Toque para alternar seu status.</Text>
+        </>
+      )}
     </View>
 
     <Pressable
